@@ -157,6 +157,8 @@ jobs:
 
               private lateinit var status: TextView
               private lateinit var pad: View
+              private lateinit var logView: TextView
+              private val lines = ArrayList<String>()
 
               private var sens = 1500
               private var dead = 5500
@@ -215,6 +217,10 @@ jobs:
                   status.textSize = 16f
                   status.text = "Запуск..."
                   root.addView(status)
+
+                  logView = TextView(this)
+                  logView.textSize = 12f
+                  root.addView(logView)
 
                   val hint = TextView(this)
                   hint.text = "Тёмная область ниже: коснись, чтобы захватить мышь. Громкость вниз: отпустить мышь."
@@ -290,6 +296,12 @@ jobs:
 
               private fun say(s: String) {
                   status.text = s
+              }
+
+              private fun log(s: String) {
+                  lines.add(s)
+                  while (lines.size > 12) lines.removeAt(0)
+                  logView.text = lines.joinToString("\n")
               }
 
               private fun slider(label: String, min: Int, max: Int, init: Int, onSet: (Int) -> Unit): View {
@@ -375,7 +387,32 @@ jobs:
                       say(if (registered) "Готово. Теперь сопрягай с планшета, затем «Выбрать планшет»" else "Профиль не зарегистрирован")
                   }
 
+                  override fun onGetReport(device: BluetoothDevice?, type: Byte, id: Byte, bufferSize: Int) {
+                      log("хост: GET_REPORT")
+                      hid?.replyReport(device, type, id, last)
+                  }
+
+                  override fun onSetReport(device: BluetoothDevice?, type: Byte, id: Byte, data: ByteArray?) {
+                      log("хост: SET_REPORT")
+                      hid?.reportError(device, BluetoothHidDevice.ERROR_RSP_SUCCESS)
+                  }
+
+                  override fun onSetProtocol(device: BluetoothDevice?, protocol: Byte) {
+                      log("хост: SET_PROTOCOL $protocol")
+                  }
+
+                  override fun onVirtualCableUnplug(device: BluetoothDevice?) {
+                      log("хост: VIRTUAL_CABLE_UNPLUG")
+                  }
+
                   override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
+                      val n = when (state) {
+                          BluetoothProfile.STATE_CONNECTED -> "CONNECTED"
+                          BluetoothProfile.STATE_CONNECTING -> "CONNECTING"
+                          BluetoothProfile.STATE_DISCONNECTING -> "DISCONNECTING"
+                          else -> "DISCONNECTED"
+                      }
+                      log("состояние: $n")
                       connected = state == BluetoothProfile.STATE_CONNECTED
                       if (connected) host = device
                       say(if (connected) "Подключено: ${device?.name}" else "Не подключено")
@@ -398,7 +435,8 @@ jobs:
                           val sub = (BluetoothHidDevice.SUBCLASS1_NONE.toInt() or
                               BluetoothHidDevice.SUBCLASS2_GAMEPAD.toInt()).toByte()
                           val sdp = BluetoothHidDeviceAppSdpSettings("Mouse2Pad", "Gamepad bridge", "m2p", sub, DESC)
-                          hd.registerApp(sdp, null, null, mainExecutor, callback)
+                          val ok = hd.registerApp(sdp, null, null, mainExecutor, callback)
+                          log("registerApp: $ok")
                       }
 
                       override fun onServiceDisconnected(profile: Int) {
@@ -418,7 +456,8 @@ jobs:
                       .setTitle("Какой планшет?")
                       .setItems(names) { _, i ->
                           host = list[i]
-                          hid?.connect(list[i])
+                          val ok = hid?.connect(list[i])
+                          log("connect(): $ok")
                           say("Подключаюсь...")
                       }
                       .show()
