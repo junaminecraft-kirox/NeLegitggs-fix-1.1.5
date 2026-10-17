@@ -1,0 +1,495 @@
+name: Build ForTablet APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Generate project
+        run: |
+          mkdir -p app/src/main/java/com/m2p
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Mouse2Pad"
+          include ':app'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          EOF
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=true
+          EOF
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.m2p'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.m2p.fortablet'
+                  minSdk 28
+                  targetSdk 34
+                  versionCode 1
+                  versionName '2.0-ForTablet'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+          }
+          dependencies {
+              implementation 'dev.rikka.shizuku:api:13.1.5'
+              implementation 'dev.rikka.shizuku:provider:13.1.5'
+          }
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+              <application
+                  android:label="ForTablet"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <provider
+                      android:name="rikka.shizuku.ShizukuProvider"
+                      android:authorities="${applicationId}.shizuku"
+                      android:enabled="true"
+                      android:exported="true"
+                      android:multiprocess="false"
+                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/m2p/MainActivity.kt <<'EOF'
+          package com.m2p
+
+          import android.app.Activity
+          import android.content.pm.PackageManager
+          import android.os.Bundle
+          import android.view.View
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.SeekBar
+          import android.widget.TextView
+          import rikka.shizuku.Shizuku
+          import java.io.InputStream
+
+          class MainActivity : Activity() {
+
+              private lateinit var status: TextView
+              private lateinit var logView: TextView
+              private lateinit var scroll: ScrollView
+              private var proc: Process? = null
+              private var sens = 1500
+              private var dead = 5500
+              private val lines = ArrayList<String>()
+
+              private val onBinder = Shizuku.OnBinderReceivedListener { runOnUiThread { refresh() } }
+              private val onDead = Shizuku.OnBinderDeadListener { runOnUiThread { refresh() } }
+              private val onPerm = Shizuku.OnRequestPermissionResultListener { _, _ -> runOnUiThread { refresh() } }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setPadding(32, 32, 32, 32)
+
+                  val title = TextView(this)
+                  title.text = "ForTablet (Shizuku)"
+                  title.textSize = 22f
+                  root.addView(title)
+
+                  status = TextView(this)
+                  status.textSize = 16f
+                  root.addView(status)
+
+                  root.addView(button("1. Разрешить Shizuku") { askPermission() })
+                  root.addView(button("2. Запустить мост") { startBridge() })
+                  root.addView(button("Остановить") { stopBridge() })
+                  root.addView(slider("Чувствительность", 200, 6000, sens) {
+                      sens = it
+                      send("S $it")
+                  })
+                  root.addView(slider("Мёртвая зона", 0, 15000, dead) {
+                      dead = it
+                      send("D $it")
+                  })
+
+                  scroll = ScrollView(this)
+                  logView = TextView(this)
+                  logView.textSize = 12f
+                  scroll.addView(logView)
+                  root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+                  setContentView(root)
+
+                  Shizuku.addBinderReceivedListenerSticky(onBinder)
+                  Shizuku.addBinderDeadListener(onDead)
+                  Shizuku.addRequestPermissionResultListener(onPerm)
+                  refresh()
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  Shizuku.removeBinderReceivedListener(onBinder)
+                  Shizuku.removeBinderDeadListener(onDead)
+                  Shizuku.removeRequestPermissionResultListener(onPerm)
+              }
+
+              private fun button(label: String, action: () -> Unit): Button {
+                  val b = Button(this)
+                  b.text = label
+                  b.setOnClickListener { action() }
+                  return b
+              }
+
+              private fun slider(label: String, min: Int, max: Int, init: Int, onSet: (Int) -> Unit): View {
+                  val box = LinearLayout(this)
+                  box.orientation = LinearLayout.VERTICAL
+                  val t = TextView(this)
+                  t.text = "$label: $init"
+                  val s = SeekBar(this)
+                  s.max = max - min
+                  s.progress = init - min
+                  s.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                          onSet(min + p)
+                          t.text = "$label: ${min + p}"
+                      }
+                      override fun onStartTrackingTouch(sb: SeekBar?) {}
+                      override fun onStopTrackingTouch(sb: SeekBar?) {}
+                  })
+                  box.addView(t)
+                  box.addView(s)
+                  return box
+              }
+
+              private fun log(s: String) {
+                  lines.add(s)
+                  while (lines.size > 60) lines.removeAt(0)
+                  logView.text = lines.joinToString("\n")
+                  scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+              }
+
+              private fun post(s: String) {
+                  runOnUiThread { log(s) }
+              }
+
+              private fun binderAlive(): Boolean = try {
+                  Shizuku.pingBinder()
+              } catch (e: Throwable) {
+                  false
+              }
+
+              private fun granted(): Boolean = try {
+                  binderAlive() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+              } catch (e: Throwable) {
+                  false
+              }
+
+              private fun refresh() {
+                  status.text = when {
+                      !binderAlive() -> "Shizuku не запущен (открой приложение Shizuku и запусти его)"
+                      !granted() -> "Shizuku запущен. Нажми «1. Разрешить Shizuku»"
+                      else -> "Shizuku готов. Нажми «2. Запустить мост»"
+                  }
+              }
+
+              private fun askPermission() {
+                  if (!binderAlive()) {
+                      log("Shizuku не запущен")
+                      return
+                  }
+                  if (granted()) {
+                      log("Разрешение уже есть")
+                      return
+                  }
+                  Shizuku.requestPermission(100)
+              }
+
+              private fun shizukuExec(cmd: Array<String>): Process {
+                  val m = Shizuku::class.java.getDeclaredMethod(
+                      "newProcess",
+                      Array<String>::class.java,
+                      Array<String>::class.java,
+                      String::class.java
+                  )
+                  m.isAccessible = true
+                  return m.invoke(null, cmd, null, null) as Process
+              }
+
+              private fun pump(s: InputStream) {
+                  Thread {
+                      try {
+                          s.bufferedReader().forEachLine { l -> post(l) }
+                      } catch (e: Throwable) {
+                          post("поток закрыт")
+                      }
+                  }.start()
+              }
+
+              private fun send(s: String) {
+                  Thread {
+                      try {
+                          val o = proc?.outputStream
+                          if (o != null) {
+                              o.write((s + "\n").toByteArray())
+                              o.flush()
+                          }
+                      } catch (e: Throwable) {
+                      }
+                  }.start()
+              }
+
+              private fun startBridge() {
+                  if (!granted()) {
+                      log("Сначала запусти Shizuku и дай разрешение")
+                      return
+                  }
+                  val apk = applicationInfo.sourceDir
+                  log("запуск...")
+                  Thread {
+                      try {
+                          shizukuExec(arrayOf("pkill", "-f", "m2p-serve[r]")).waitFor()
+                          val p = shizukuExec(
+                              arrayOf(
+                                  "sh", "-c",
+                                  "CLASSPATH=$apk exec app_process /system/bin --nice-name=m2p-server com.m2p.Server"
+                              )
+                          )
+                          proc = p
+                          pump(p.inputStream)
+                          pump(p.errorStream)
+                          send("S $sens")
+                          send("D $dead")
+                      } catch (e: Throwable) {
+                          post("ОШИБКА запуска: " + (e.cause ?: e))
+                      }
+                  }.start()
+              }
+
+              private fun stopBridge() {
+                  send("Q")
+                  log("остановка...")
+              }
+          }
+          EOF
+          cat > app/src/main/java/com/m2p/Server.java <<'EOF'
+          package com.m2p;
+
+          import android.os.SystemClock;
+          import android.view.InputDevice;
+          import android.view.InputEvent;
+          import android.view.KeyEvent;
+          import android.view.MotionEvent;
+
+          import java.io.BufferedReader;
+          import java.io.FileInputStream;
+          import java.io.FileReader;
+          import java.io.InputStreamReader;
+          import java.lang.reflect.Method;
+          import java.nio.ByteBuffer;
+          import java.nio.ByteOrder;
+          import java.util.ArrayList;
+          import java.util.List;
+
+          /** Запускается через Shizuku (app_process, uid shell): читает мышь из /dev/input и подаёт в систему события "геймпада". */
+          public class Server {
+              static volatile int sens = 1500;
+              static volatile int dead = 5500;
+              static final Object lock = new Object();
+              static float dx, dy;
+              static boolean lmb, rmb, mmb;
+              static int wheel;
+
+              static Object im;
+              static Method inject;
+              static boolean inject3;
+              static int deviceId = -1;
+
+              static void log(String s) {
+                  System.out.println(s);
+                  System.out.flush();
+              }
+
+              public static void main(String[] args) {
+                  try {
+                      log("сервер запущен, uid=" + android.os.Process.myUid());
+                      initInject();
+                      pickDeviceId();
+                      List<String> nodes = findMice();
+                      if (nodes.isEmpty()) {
+                          log("МЫШЬ НЕ НАЙДЕНА (проверь, что она подключена к планшету)");
+                          return;
+                      }
+                      for (final String n : nodes) {
+                          new Thread(new Runnable() {
+                              public void run() {
+                                  readLoop(n);
+                              }
+                          }).start();
+                      }
+                      new Thread(new Runnable() {
+                          public void run() {
+                              stdinLoop();
+                          }
+                      }).start();
+                      loop();
+                  } catch (Throwable t) {
+                      log("ФАТАЛЬНО: " + t);
+                  }
+              }
+
+              static void initInject() throws Exception {
+                  Class<?> c;
+                  try {
+                      c = Class.forName("android.hardware.input.InputManagerGlobal");
+                  } catch (ClassNotFoundException e) {
+                      c = Class.forName("android.hardware.input.InputManager");
+                  }
+                  im = c.getDeclaredMethod("getInstance").invoke(null);
+                  try {
+                      inject = c.getMethod("injectInputEvent", InputEvent.class, int.class);
+                      inject3 = false;
+                  } catch (NoSuchMethodException e) {
+                      inject = c.getMethod("injectInputEvent", InputEvent.class, int.class, int.class);
+                      inject3 = true;
+                  }
+                  log("инъекция: " + c.getSimpleName() + (inject3 ? " (3 арг.)" : " (2 арг.)"));
+              }
+
+              static void pickDeviceId() {
+                  try {
+                      for (int id : InputDevice.getDeviceIds()) {
+                          InputDevice d = InputDevice.getDevice(id);
+                          if (d == null) continue;
+                          int s = d.getSources();
+                          if ((s & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+                                  || (s & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
+                              deviceId = id;
+                              log("найден геймпад id=" + id + " " + d.getName());
+                              return;
+                          }
+                      }
+                  } catch (Throwable t) {
+                      log("список устройств: " + t);
+                  }
+                  log("геймпад не найден, deviceId=-1");
+              }
+
+              static List<String> findMice() throws Exception {
+                  List<String> out = new ArrayList<String>();
+                  BufferedReader r = new BufferedReader(new FileReader("/proc/bus/input/devices"));
+                  String name = "", handlers = "", rel = "";
+                  while (true) {
+                      String line = r.readLine();
+                      if (line == null || line.trim().isEmpty()) {
+                          if (!rel.isEmpty() && handlers.contains("event")) {
+                              String t = rel.trim();
+                              int sp = t.lastIndexOf(' ');
+                              String hex = sp >= 0 ? t.substring(sp + 1) : t;
+                              long v = Long.parseLong(hex, 16);
+                              if ((v & 3L) == 3L) {
+                                  for (String h : handlers.trim().split("\\s+")) {
+                                      if (h.startsWith("event")) {
+                                          out.add("/dev/input/" + h);
+                                          log("мышь: " + name + " -> " + h);
+                                      }
+                                  }
+                              }
+                          }
+                          name = "";
+                          handlers = "";
+                          rel = "";
+                          if (line == null) break;
+                          continue;
+                      }
+                      if (line.startsWith("N: Name=")) name = line.substring(8);
+                      else if (line.startsWith("H: Handlers=")) handlers = line.substring(12);
+                      else if (line.startsWith("B: REL=")) rel = line.substring(7);
+                  }
+                  r.close();
+                  return out;
+              }
+
+              static void readLoop(String path) {
+                  try {
+                      FileInputStream in = new FileInputStream(path);
+                      int sz = android.os.Process.is64Bit() ? 24 : 16;
+                      byte[] buf = new byte[sz];
+                      ByteBuffer bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN);
+                      while (true) {
+                          int got = 0;
+                          while (got < sz) {
+                              int n = in.read(buf, got, sz - got);
+                              if (n < 0) return;
+                              got += n;
+                          }
+                          int off = sz - 8;
+                          int type = bb.getShort(off) & 0xffff;
+                          int code = bb.getShort(off + 2) & 0xffff;
+                          int val = bb.getInt(off + 4);
+                          if (type == 2) {
+                              synchronized (lock) {
+                                  if (code == 0) dx += val;
+                                  else if (code == 1) dy += val;
+                                  else if (code == 8) wheel += val;
+                              }
+                          } else if (type == 1) {
+                              synchronized (lock) {
+                                  if (code == 0x110) lmb = val != 0;
+                                  else if (code == 0x111) rmb = val != 0;
+                                  else if (code == 0x112) mmb = val != 0;
+                              }
+                          }
+                      }
+                  } catch (Throwable t) {
+                      log("ошибка ч
