@@ -1,0 +1,443 @@
+name: Build Mouse2Pad APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Generate project
+        run: |
+          mkdir -p app/src/main/java/com/m2p
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Mouse2Pad"
+          include ':app'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          EOF
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.m2p'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.m2p.mouse2pad'
+                  minSdk 28
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+          }
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <application
+                  android:label="Mouse2Pad"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/m2p/MainActivity.kt <<'EOF'
+          package com.m2p
+
+          import android.Manifest
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.bluetooth.BluetoothDevice
+          import android.bluetooth.BluetoothHidDevice
+          import android.bluetooth.BluetoothHidDeviceAppSdpSettings
+          import android.bluetooth.BluetoothManager
+          import android.bluetooth.BluetoothProfile
+          import android.content.Context
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.view.KeyEvent
+          import android.view.MotionEvent
+          import android.view.View
+          import android.view.WindowManager
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.SeekBar
+          import android.widget.TextView
+
+          private const val BTN_A = 1 shl 0
+          private const val BTN_B = 1 shl 1
+          private const val BTN_Y = 1 shl 4
+          private const val BTN_L1 = 1 shl 6
+          private const val BTN_R1 = 1 shl 7
+          private const val BTN_L2 = 1 shl 8
+          private const val BTN_R2 = 1 shl 9
+          private const val BTN_START = 1 shl 11
+          private const val BTN_THUMBL = 1 shl 13
+          private const val BTN_THUMBR = 1 shl 14
+
+          // HID-дескриптор геймпада: 15 кнопок, стики X/Y/Z/Rz (16 бит), курки Brake/Gas (8 бит)
+          private val DESC = intArrayOf(
+              0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01,
+              0x05, 0x09, 0x19, 0x01, 0x29, 0x0F, 0x15, 0x00, 0x25, 0x01,
+              0x75, 0x01, 0x95, 0x0F, 0x81, 0x02,
+              0x95, 0x01, 0x81, 0x03,
+              0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09, 0x35,
+              0x16, 0x01, 0x80, 0x26, 0xFF, 0x7F, 0x75, 0x10, 0x95, 0x04, 0x81, 0x02,
+              0x05, 0x02, 0x09, 0xC5, 0x09, 0xC4,
+              0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02,
+              0xC0
+          ).map { it.toByte() }.toByteArray()
+
+          class MainActivity : Activity() {
+
+              private val handler = Handler(Looper.getMainLooper())
+              private var hid: BluetoothHidDevice? = null
+              private var host: BluetoothDevice? = null
+              private var connected = false
+
+              private lateinit var status: TextView
+              private lateinit var pad: View
+
+              private var sens = 1500
+              private var dead = 5500
+
+              private var dx = 0f
+              private var dy = 0f
+              private var mouseMask = 0
+              private var keyMask = 0
+              private var pulseL1 = 0
+              private var pulseR1 = 0
+              private var kUp = false
+              private var kDown = false
+              private var kLeft = false
+              private var kRight = false
+              private var last = ByteArray(12)
+
+              private val ticker = object : Runnable {
+                  override fun run() {
+                      send()
+                      handler.postDelayed(this, 10)
+                  }
+              }
+
+              private inner class Pad(c: Context) : View(c) {
+                  override fun onCapturedPointerEvent(e: MotionEvent): Boolean {
+                      if (e.actionMasked == MotionEvent.ACTION_SCROLL) {
+                          val v = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                          if (v > 0) pulseR1 = 3 else if (v < 0) pulseL1 = 3
+                      } else {
+                          for (i in 0 until e.historySize) {
+                              dx += e.getHistoricalX(i)
+                              dy += e.getHistoricalY(i)
+                          }
+                          dx += e.x
+                          dy += e.y
+                      }
+                      val bs = e.buttonState
+                      var m = 0
+                      if ((bs and MotionEvent.BUTTON_PRIMARY) != 0) m = m or BTN_R2
+                      if ((bs and MotionEvent.BUTTON_SECONDARY) != 0) m = m or BTN_L2
+                      if ((bs and MotionEvent.BUTTON_TERTIARY) != 0) m = m or BTN_Y
+                      mouseMask = m
+                      return true
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setPadding(32, 32, 32, 32)
+
+                  status = TextView(this)
+                  status.textSize = 16f
+                  status.text = "Запуск..."
+                  root.addView(status)
+
+                  val hint = TextView(this)
+                  hint.text = "Тёмная область ниже: коснись, чтобы захватить мышь. Громкость вниз: отпустить мышь."
+                  root.addView(hint)
+
+                  val btn = Button(this)
+                  btn.text = "Выбрать планшет"
+                  btn.setOnClickListener { chooseHost() }
+                  root.addView(btn)
+
+                  root.addView(slider("Чувствительность", 200, 6000, sens) { sens = it })
+                  root.addView(slider("Мёртвая зона", 0, 15000, dead) { dead = it })
+
+                  pad = Pad(this)
+                  pad.setBackgroundColor(Color.DKGRAY)
+                  pad.isFocusable = true
+                  pad.isFocusableInTouchMode = true
+                  pad.setOnTouchListener { v, ev ->
+                      if (ev.action == MotionEvent.ACTION_DOWN) {
+                          v.requestFocus()
+                          v.requestPointerCapture()
+                      }
+                      true
+                  }
+                  pad.setOnKeyListener { _, code, ev -> key(code, ev.action == KeyEvent.ACTION_DOWN) }
+                  root.addView(pad, LinearLayout.LayoutParams(-1, 0, 1f))
+
+                  setContentView(root)
+
+                  if (Build.VERSION.SDK_INT >= 31 &&
+                      checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+                  ) {
+                      requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 1)
+                  } else {
+                      startBt()
+                  }
+              }
+
+              override fun onRequestPermissionsResult(
+                  requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                      startBt()
+                  } else {
+                      say("Нужно разрешение на Bluetooth")
+                  }
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  pad.requestFocus()
+                  handler.post(ticker)
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  mouseMask = 0
+                  keyMask = 0
+                  kUp = false; kDown = false; kLeft = false; kRight = false
+                  dx = 0f; dy = 0f
+                  send()
+                  handler.removeCallbacks(ticker)
+              }
+
+              override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+                  if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                      pad.releasePointerCapture()
+                      return true
+                  }
+                  return super.onKeyDown(keyCode, event)
+              }
+
+              private fun say(s: String) {
+                  status.text = s
+              }
+
+              private fun slider(label: String, min: Int, max: Int, init: Int, onSet: (Int) -> Unit): View {
+                  val box = LinearLayout(this)
+                  box.orientation = LinearLayout.VERTICAL
+                  val t = TextView(this)
+                  t.text = "$label: $init"
+                  val s = SeekBar(this)
+                  s.max = max - min
+                  s.progress = init - min
+                  s.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                          onSet(min + p)
+                          t.text = "$label: ${min + p}"
+                      }
+                      override fun onStartTrackingTouch(sb: SeekBar?) {}
+                      override fun onStopTrackingTouch(sb: SeekBar?) {}
+                  })
+                  box.addView(t)
+                  box.addView(s)
+                  return box
+              }
+
+              private fun setKey(bit: Int, on: Boolean) {
+                  keyMask = if (on) keyMask or bit else keyMask and bit.inv()
+              }
+
+              // Клавиатура (если подключена к телефону): WASD, пробел, E, Q, Shift, Ctrl, Esc
+              private fun key(code: Int, down: Boolean): Boolean {
+                  when (code) {
+                      KeyEvent.KEYCODE_W -> kUp = down
+                      KeyEvent.KEYCODE_S -> kDown = down
+                      KeyEvent.KEYCODE_A -> kLeft = down
+                      KeyEvent.KEYCODE_D -> kRight = down
+                      KeyEvent.KEYCODE_SPACE -> setKey(BTN_A, down)
+                      KeyEvent.KEYCODE_Q -> setKey(BTN_B, down)
+                      KeyEvent.KEYCODE_E -> setKey(BTN_Y, down)
+                      KeyEvent.KEYCODE_SHIFT_LEFT -> setKey(BTN_THUMBR, down)
+                      KeyEvent.KEYCODE_CTRL_LEFT -> setKey(BTN_THUMBL, down)
+                      KeyEvent.KEYCODE_ESCAPE -> setKey(BTN_START, down)
+                      else -> return false
+                  }
+                  return true
+              }
+
+              private fun stick(d: Float): Int {
+                  if (d == 0f) return 0
+                  val v = Math.min(32767f, dead + Math.abs(d) * sens).toInt()
+                  return if (d > 0) v else -v
+              }
+
+              private fun put(r: ByteArray, o: Int, v: Int) {
+                  r[o] = v.toByte()
+                  r[o + 1] = (v shr 8).toByte()
+              }
+
+              private fun send() {
+                  val held = mouseMask or keyMask
+                  var m = held
+                  if (pulseL1 > 0) { m = m or BTN_L1; pulseL1-- }
+                  if (pulseR1 > 0) { m = m or BTN_R1; pulseR1-- }
+                  val lx = (if (kRight) 32767 else 0) - (if (kLeft) 32767 else 0)
+                  val ly = (if (kDown) 32767 else 0) - (if (kUp) 32767 else 0)
+                  val r = ByteArray(12)
+                  r[0] = m.toByte()
+                  r[1] = (m shr 8).toByte()
+                  put(r, 2, lx)
+                  put(r, 4, ly)
+                  put(r, 6, stick(dx))
+                  put(r, 8, stick(dy))
+                  r[10] = if ((held and BTN_L2) != 0) 255.toByte() else 0.toByte()
+                  r[11] = if ((held and BTN_R2) != 0) 255.toByte() else 0.toByte()
+                  dx = 0f
+                  dy = 0f
+                  if (connected && !r.contentEquals(last)) {
+                      hid?.sendReport(host, 1, r)
+                      last = r
+                  }
+              }
+
+              private val callback = object : BluetoothHidDevice.Callback() {
+                  override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
+                      say(if (registered) "Готово. Теперь сопрягай с планшета, затем «Выбрать планшет»" else "Профиль не зарегистрирован")
+                  }
+
+                  override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
+                      connected = state == BluetoothProfile.STATE_CONNECTED
+                      if (connected) host = device
+                      say(if (connected) "Подключено: ${device?.name}" else "Не подключено")
+                  }
+              }
+
+              private fun adapter() =
+                  (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+
+              private fun startBt() {
+                  val ad = adapter()
+                  if (ad == null || !ad.isEnabled) {
+                      say("Включи Bluetooth и перезапусти приложение")
+                      return
+                  }
+                  ad.getProfileProxy(this, object : BluetoothProfile.ServiceListener {
+                      override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+                          val hd = proxy as? BluetoothHidDevice ?: return
+                          hid = hd
+                          val sub = (BluetoothHidDevice.SUBCLASS1_NONE.toInt() or
+                              BluetoothHidDevice.SUBCLASS2_GAMEPAD.toInt()).toByte()
+                          val sdp = BluetoothHidDeviceAppSdpSettings("Mouse2Pad", "Gamepad bridge", "m2p", sub, DESC)
+                          hd.registerApp(sdp, null, null, mainExecutor, callback)
+                      }
+
+                      override fun onServiceDisconnected(profile: Int) {
+                          hid = null
+                      }
+                  }, BluetoothProfile.HID_DEVICE)
+              }
+
+              private fun chooseHost() {
+                  val list = adapter()?.bondedDevices?.toList() ?: emptyList()
+                  if (list.isEmpty()) {
+                      say("Сначала сопрягите телефон с планшетом в настройках Bluetooth")
+                      return
+                  }
+                  val names = list.map { it.name ?: it.address }.toTypedArray()
+                  AlertDialog.Builder(this)
+                      .setTitle("Какой планшет?")
+                      .setItems(names) { _, i ->
+                          host = list[i]
+                          hid?.connect(list[i])
+                          say("Подключаюсь...")
+                      }
+                      .show()
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mouse2Pad-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Mouse2Pad build ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
