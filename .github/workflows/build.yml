@@ -51,6 +51,7 @@ jobs:
           EOF
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=true
           EOF
           cat > app/build.gradle <<'EOF'
           plugins {
@@ -61,11 +62,11 @@ jobs:
               namespace 'com.m2p'
               compileSdk 34
               defaultConfig {
-                  applicationId 'com.m2p.mouse2pad'
+                  applicationId 'com.m2p.shizupad'
                   minSdk 28
                   targetSdk 34
                   versionCode 1
-                  versionName '1.0'
+                  versionName '2.0'
               }
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
@@ -75,16 +76,25 @@ jobs:
                   jvmTarget = '17'
               }
           }
+          dependencies {
+              implementation 'dev.rikka.shizuku:api:13.1.5'
+              implementation 'dev.rikka.shizuku:provider:13.1.5'
+          }
           EOF
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
               <application
                   android:label="Mouse2Pad"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <provider
+                      android:name="rikka.shizuku.ShizukuProvider"
+                      android:authorities="${applicationId}.shizuku"
+                      android:enabled="true"
+                      android:exported="true"
+                      android:multiprocess="false"
+                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -100,114 +110,34 @@ jobs:
           cat > app/src/main/java/com/m2p/MainActivity.kt <<'EOF'
           package com.m2p
 
-          import android.Manifest
           import android.app.Activity
-          import android.app.AlertDialog
-          import android.bluetooth.BluetoothDevice
-          import android.bluetooth.BluetoothHidDevice
-          import android.bluetooth.BluetoothHidDeviceAppSdpSettings
-          import android.bluetooth.BluetoothManager
-          import android.bluetooth.BluetoothProfile
-          import android.content.Context
           import android.content.pm.PackageManager
-          import android.graphics.Color
-          import android.os.Build
           import android.os.Bundle
-          import android.os.Handler
-          import android.os.Looper
-          import android.view.KeyEvent
-          import android.view.MotionEvent
           import android.view.View
-          import android.view.WindowManager
           import android.widget.Button
           import android.widget.LinearLayout
+          import android.widget.ScrollView
           import android.widget.SeekBar
           import android.widget.TextView
-
-          private const val BTN_A = 1 shl 0
-          private const val BTN_B = 1 shl 1
-          private const val BTN_Y = 1 shl 4
-          private const val BTN_L1 = 1 shl 6
-          private const val BTN_R1 = 1 shl 7
-          private const val BTN_L2 = 1 shl 8
-          private const val BTN_R2 = 1 shl 9
-          private const val BTN_START = 1 shl 11
-          private const val BTN_THUMBL = 1 shl 13
-          private const val BTN_THUMBR = 1 shl 14
-
-          // HID-дескриптор геймпада: 15 кнопок, стики X/Y/Z/Rz (16 бит), курки Brake/Gas (8 бит)
-          private val DESC = intArrayOf(
-              0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01,
-              0x05, 0x09, 0x19, 0x01, 0x29, 0x0F, 0x15, 0x00, 0x25, 0x01,
-              0x75, 0x01, 0x95, 0x0F, 0x81, 0x02,
-              0x95, 0x01, 0x81, 0x03,
-              0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09, 0x35,
-              0x16, 0x01, 0x80, 0x26, 0xFF, 0x7F, 0x75, 0x10, 0x95, 0x04, 0x81, 0x02,
-              0x05, 0x02, 0x09, 0xC5, 0x09, 0xC4,
-              0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02,
-              0xC0
-          ).map { it.toByte() }.toByteArray()
+          import rikka.shizuku.Shizuku
+          import java.io.InputStream
 
           class MainActivity : Activity() {
 
-              private val handler = Handler(Looper.getMainLooper())
-              private var hid: BluetoothHidDevice? = null
-              private var host: BluetoothDevice? = null
-              private var connected = false
-
               private lateinit var status: TextView
-              private lateinit var pad: View
               private lateinit var logView: TextView
-              private val lines = ArrayList<String>()
-
+              private lateinit var scroll: ScrollView
+              private var proc: Process? = null
               private var sens = 1500
               private var dead = 5500
+              private val lines = ArrayList<String>()
 
-              private var dx = 0f
-              private var dy = 0f
-              private var mouseMask = 0
-              private var keyMask = 0
-              private var pulseL1 = 0
-              private var pulseR1 = 0
-              private var kUp = false
-              private var kDown = false
-              private var kLeft = false
-              private var kRight = false
-              private var last = ByteArray(12)
-
-              private val ticker = object : Runnable {
-                  override fun run() {
-                      send()
-                      handler.postDelayed(this, 10)
-                  }
-              }
-
-              private inner class Pad(c: Context) : View(c) {
-                  override fun onCapturedPointerEvent(e: MotionEvent): Boolean {
-                      if (e.actionMasked == MotionEvent.ACTION_SCROLL) {
-                          val v = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                          if (v > 0) pulseR1 = 3 else if (v < 0) pulseL1 = 3
-                      } else {
-                          for (i in 0 until e.historySize) {
-                              dx += e.getHistoricalX(i)
-                              dy += e.getHistoricalY(i)
-                          }
-                          dx += e.x
-                          dy += e.y
-                      }
-                      val bs = e.buttonState
-                      var m = 0
-                      if ((bs and MotionEvent.BUTTON_PRIMARY) != 0) m = m or BTN_R2
-                      if ((bs and MotionEvent.BUTTON_SECONDARY) != 0) m = m or BTN_L2
-                      if ((bs and MotionEvent.BUTTON_TERTIARY) != 0) m = m or BTN_Y
-                      mouseMask = m
-                      return true
-                  }
-              }
+              private val onBinder = Shizuku.OnBinderReceivedListener { runOnUiThread { refresh() } }
+              private val onDead = Shizuku.OnBinderDeadListener { runOnUiThread { refresh() } }
+              private val onPerm = Shizuku.OnRequestPermissionResultListener { _, _ -> runOnUiThread { refresh() } }
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
                   val root = LinearLayout(this)
                   root.orientation = LinearLayout.VERTICAL
@@ -215,93 +145,45 @@ jobs:
 
                   status = TextView(this)
                   status.textSize = 16f
-                  status.text = "Запуск..."
                   root.addView(status)
 
+                  root.addView(button("1. Разрешить Shizuku") { askPermission() })
+                  root.addView(button("2. Запустить мост") { startBridge() })
+                  root.addView(button("Остановить") { stopBridge() })
+                  root.addView(slider("Чувствительность", 200, 6000, sens) {
+                      sens = it
+                      send("S $it")
+                  })
+                  root.addView(slider("Мёртвая зона", 0, 15000, dead) {
+                      dead = it
+                      send("D $it")
+                  })
+
+                  scroll = ScrollView(this)
                   logView = TextView(this)
                   logView.textSize = 12f
-                  root.addView(logView)
-
-                  val hint = TextView(this)
-                  hint.text = "Тёмная область ниже: коснись, чтобы захватить мышь. Громкость вниз: отпустить мышь."
-                  root.addView(hint)
-
-                  val btn = Button(this)
-                  btn.text = "Выбрать планшет"
-                  btn.setOnClickListener { chooseHost() }
-                  root.addView(btn)
-
-                  root.addView(slider("Чувствительность", 200, 6000, sens) { sens = it })
-                  root.addView(slider("Мёртвая зона", 0, 15000, dead) { dead = it })
-
-                  pad = Pad(this)
-                  pad.setBackgroundColor(Color.DKGRAY)
-                  pad.isFocusable = true
-                  pad.isFocusableInTouchMode = true
-                  pad.setOnTouchListener { v, ev ->
-                      if (ev.action == MotionEvent.ACTION_DOWN) {
-                          v.requestFocus()
-                          v.requestPointerCapture()
-                      }
-                      true
-                  }
-                  pad.setOnKeyListener { _, code, ev -> key(code, ev.action == KeyEvent.ACTION_DOWN) }
-                  root.addView(pad, LinearLayout.LayoutParams(-1, 0, 1f))
-
+                  scroll.addView(logView)
+                  root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
                   setContentView(root)
 
-                  if (Build.VERSION.SDK_INT >= 31 &&
-                      checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-                  ) {
-                      requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 1)
-                  } else {
-                      startBt()
-                  }
+                  Shizuku.addBinderReceivedListenerSticky(onBinder)
+                  Shizuku.addBinderDeadListener(onDead)
+                  Shizuku.addRequestPermissionResultListener(onPerm)
+                  refresh()
               }
 
-              override fun onRequestPermissionsResult(
-                  requestCode: Int, permissions: Array<out String>, grantResults: IntArray
-              ) {
-                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-                  if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                      startBt()
-                  } else {
-                      say("Нужно разрешение на Bluetooth")
-                  }
+              override fun onDestroy() {
+                  super.onDestroy()
+                  Shizuku.removeBinderReceivedListener(onBinder)
+                  Shizuku.removeBinderDeadListener(onDead)
+                  Shizuku.removeRequestPermissionResultListener(onPerm)
               }
 
-              override fun onResume() {
-                  super.onResume()
-                  pad.requestFocus()
-                  handler.post(ticker)
-              }
-
-              override fun onPause() {
-                  super.onPause()
-                  mouseMask = 0
-                  keyMask = 0
-                  kUp = false; kDown = false; kLeft = false; kRight = false
-                  dx = 0f; dy = 0f
-                  send()
-                  handler.removeCallbacks(ticker)
-              }
-
-              override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-                  if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-                      pad.releasePointerCapture()
-                      return true
-                  }
-                  return super.onKeyDown(keyCode, event)
-              }
-
-              private fun say(s: String) {
-                  status.text = s
-              }
-
-              private fun log(s: String) {
-                  lines.add(s)
-                  while (lines.size > 12) lines.removeAt(0)
-                  logView.text = lines.joinToString("\n")
+              private fun button(label: String, action: () -> Unit): Button {
+                  val b = Button(this)
+                  b.text = label
+                  b.setOnClickListener { action() }
+                  return b
               }
 
               private fun slider(label: String, min: Int, max: Int, init: Int, onSet: (Int) -> Unit): View {
@@ -325,156 +207,290 @@ jobs:
                   return box
               }
 
-              private fun setKey(bit: Int, on: Boolean) {
-                  keyMask = if (on) keyMask or bit else keyMask and bit.inv()
+              private fun log(s: String) {
+                  lines.add(s)
+                  while (lines.size > 60) lines.removeAt(0)
+                  logView.text = lines.joinToString("\n")
+                  scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
               }
 
-              // Клавиатура (если подключена к телефону): WASD, пробел, E, Q, Shift, Ctrl, Esc
-              private fun key(code: Int, down: Boolean): Boolean {
-                  when (code) {
-                      KeyEvent.KEYCODE_W -> kUp = down
-                      KeyEvent.KEYCODE_S -> kDown = down
-                      KeyEvent.KEYCODE_A -> kLeft = down
-                      KeyEvent.KEYCODE_D -> kRight = down
-                      KeyEvent.KEYCODE_SPACE -> setKey(BTN_A, down)
-                      KeyEvent.KEYCODE_Q -> setKey(BTN_B, down)
-                      KeyEvent.KEYCODE_E -> setKey(BTN_Y, down)
-                      KeyEvent.KEYCODE_SHIFT_LEFT -> setKey(BTN_THUMBR, down)
-                      KeyEvent.KEYCODE_CTRL_LEFT -> setKey(BTN_THUMBL, down)
-                      KeyEvent.KEYCODE_ESCAPE -> setKey(BTN_START, down)
-                      else -> return false
-                  }
-                  return true
+              private fun post(s: String) {
+                  runOnUiThread { log(s) }
               }
 
-              private fun stick(d: Float): Int {
-                  if (d == 0f) return 0
-                  val v = Math.min(32767f, dead + Math.abs(d) * sens).toInt()
-                  return if (d > 0) v else -v
+              private fun binderAlive(): Boolean = try {
+                  Shizuku.pingBinder()
+              } catch (e: Throwable) {
+                  false
               }
 
-              private fun put(r: ByteArray, o: Int, v: Int) {
-                  r[o] = v.toByte()
-                  r[o + 1] = (v shr 8).toByte()
+              private fun granted(): Boolean = try {
+                  binderAlive() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+              } catch (e: Throwable) {
+                  false
               }
 
-              private fun send() {
-                  val held = mouseMask or keyMask
-                  var m = held
-                  if (pulseL1 > 0) { m = m or BTN_L1; pulseL1-- }
-                  if (pulseR1 > 0) { m = m or BTN_R1; pulseR1-- }
-                  val lx = (if (kRight) 32767 else 0) - (if (kLeft) 32767 else 0)
-                  val ly = (if (kDown) 32767 else 0) - (if (kUp) 32767 else 0)
-                  val r = ByteArray(12)
-                  r[0] = m.toByte()
-                  r[1] = (m shr 8).toByte()
-                  put(r, 2, lx)
-                  put(r, 4, ly)
-                  put(r, 6, stick(dx))
-                  put(r, 8, stick(dy))
-                  r[10] = if ((held and BTN_L2) != 0) 255.toByte() else 0.toByte()
-                  r[11] = if ((held and BTN_R2) != 0) 255.toByte() else 0.toByte()
-                  dx = 0f
-                  dy = 0f
-                  if (connected && !r.contentEquals(last)) {
-                      hid?.sendReport(host, 1, r)
-                      last = r
+              private fun refresh() {
+                  status.text = when {
+                      !binderAlive() -> "Shizuku не запущен (открой приложение Shizuku и запусти его)"
+                      !granted() -> "Shizuku запущен. Нажми «1. Разрешить Shizuku»"
+                      else -> "Shizuku готов. Нажми «2. Запустить мост»"
                   }
               }
 
-              private val callback = object : BluetoothHidDevice.Callback() {
-                  override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
-                      say(if (registered) "Готово. Теперь сопрягай с планшета, затем «Выбрать планшет»" else "Профиль не зарегистрирован")
-                  }
-
-                  override fun onGetReport(device: BluetoothDevice?, type: Byte, id: Byte, bufferSize: Int) {
-                      log("хост: GET_REPORT")
-                      hid?.replyReport(device, type, id, last)
-                  }
-
-                  override fun onSetReport(device: BluetoothDevice?, type: Byte, id: Byte, data: ByteArray?) {
-                      log("хост: SET_REPORT")
-                      hid?.reportError(device, BluetoothHidDevice.ERROR_RSP_SUCCESS)
-                  }
-
-                  override fun onSetProtocol(device: BluetoothDevice?, protocol: Byte) {
-                      log("хост: SET_PROTOCOL $protocol")
-                  }
-
-                  override fun onVirtualCableUnplug(device: BluetoothDevice?) {
-                      log("хост: VIRTUAL_CABLE_UNPLUG")
-                  }
-
-                  override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
-                      val n = when (state) {
-                          BluetoothProfile.STATE_CONNECTED -> "CONNECTED"
-                          BluetoothProfile.STATE_CONNECTING -> "CONNECTING"
-                          BluetoothProfile.STATE_DISCONNECTING -> "DISCONNECTING"
-                          else -> "DISCONNECTED"
-                      }
-                      log("состояние: $n")
-                      connected = state == BluetoothProfile.STATE_CONNECTED
-                      if (connected) host = device
-                      say(if (connected) "Подключено: ${device?.name}" else "Не подключено")
-                  }
-              }
-
-              private fun adapter() =
-                  (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-
-              private fun startBt() {
-                  val ad = adapter()
-                  if (ad == null || !ad.isEnabled) {
-                      say("Включи Bluetooth и перезапусти приложение")
+              private fun askPermission() {
+                  if (!binderAlive()) {
+                      log("Shizuku не запущен")
                       return
                   }
-                  ad.getProfileProxy(this, object : BluetoothProfile.ServiceListener {
-                      override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
-                          val hd = proxy as? BluetoothHidDevice ?: return
-                          hid = hd
-                          val sub = (BluetoothHidDevice.SUBCLASS1_NONE.toInt() or
-                              BluetoothHidDevice.SUBCLASS2_GAMEPAD.toInt()).toByte()
-                          val sdp = BluetoothHidDeviceAppSdpSettings("Mouse2Pad", "Gamepad bridge", "m2p", sub, DESC)
-                          val ok = hd.registerApp(sdp, null, null, mainExecutor, callback)
-                          log("registerApp: $ok")
-                      }
-
-                      override fun onServiceDisconnected(profile: Int) {
-                          hid = null
-                      }
-                  }, BluetoothProfile.HID_DEVICE)
-              }
-
-              private fun chooseHost() {
-                  val list = adapter()?.bondedDevices?.toList() ?: emptyList()
-                  if (list.isEmpty()) {
-                      say("Сначала сопрягите телефон с планшетом в настройках Bluetooth")
+                  if (granted()) {
+                      log("Разрешение уже есть")
                       return
                   }
-                  val names = list.map { it.name ?: it.address }.toTypedArray()
-                  AlertDialog.Builder(this)
-                      .setTitle("Какой планшет?")
-                      .setItems(names) { _, i ->
-                          host = list[i]
-                          val ok = hid?.connect(list[i])
-                          log("connect(): $ok")
-                          say("Подключаюсь...")
+                  Shizuku.requestPermission(100)
+              }
+
+              private fun shizukuExec(cmd: Array<String>): Process {
+                  val m = Shizuku::class.java.getDeclaredMethod(
+                      "newProcess",
+                      Array<String>::class.java,
+                      Array<String>::class.java,
+                      String::class.java
+                  )
+                  m.isAccessible = true
+                  return m.invoke(null, cmd, null, null) as Process
+              }
+
+              private fun pump(s: InputStream) {
+                  Thread {
+                      try {
+                          s.bufferedReader().forEachLine { l -> post(l) }
+                      } catch (e: Throwable) {
+                          post("поток закрыт")
                       }
-                      .show()
+                  }.start()
+              }
+
+              private fun send(s: String) {
+                  Thread {
+                      try {
+                          val o = proc?.outputStream
+                          if (o != null) {
+                              o.write((s + "\n").toByteArray())
+                              o.flush()
+                          }
+                      } catch (e: Throwable) {
+                      }
+                  }.start()
+              }
+
+              private fun startBridge() {
+                  if (!granted()) {
+                      log("Сначала запусти Shizuku и дай разрешение")
+                      return
+                  }
+                  val apk = applicationInfo.sourceDir
+                  log("запуск...")
+                  Thread {
+                      try {
+                          shizukuExec(arrayOf("pkill", "-f", "m2p-serve[r]")).waitFor()
+                          val p = shizukuExec(
+                              arrayOf(
+                                  "sh", "-c",
+                                  "CLASSPATH=$apk exec app_process /system/bin --nice-name=m2p-server com.m2p.Server"
+                              )
+                          )
+                          proc = p
+                          pump(p.inputStream)
+                          pump(p.errorStream)
+                          send("S $sens")
+                          send("D $dead")
+                      } catch (e: Throwable) {
+                          post("ОШИБКА запуска: " + (e.cause ?: e))
+                      }
+                  }.start()
+              }
+
+              private fun stopBridge() {
+                  send("Q")
+                  log("остановка...")
               }
           }
           EOF
+          cat > app/src/main/java/com/m2p/Server.java <<'EOF'
+          package com.m2p;
 
-      - name: Build APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+          import android.os.SystemClock;
+          import android.view.InputDevice;
+          import android.view.InputEvent;
+          import android.view.KeyEvent;
+          import android.view.MotionEvent;
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Mouse2Pad-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          import java.io.BufferedReader;
+          import java.io.FileInputStream;
+          import java.io.FileReader;
+          import java.io.InputStreamReader;
+          import java.lang.reflect.Method;
+          import java.nio.ByteBuffer;
+          import java.nio.ByteOrder;
+          import java.util.ArrayList;
+          import java.util.List;
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: Mouse2Pad build ${{ github.run_number }}
-          files: app/build/outputs/apk/debug/app-debug.apk
+          /** Запускается через Shizuku (app_process, uid shell): читает мышь из /dev/input и подаёт в систему события "геймпада". */
+          public class Server {
+              static volatile int sens = 1500;
+              static volatile int dead = 5500;
+              static final Object lock = new Object();
+              static float dx, dy;
+              static boolean lmb, rmb, mmb;
+              static int wheel;
+
+              static Object im;
+              static Method inject;
+              static boolean inject3;
+              static int deviceId = -1;
+
+              static void log(String s) {
+                  System.out.println(s);
+                  System.out.flush();
+              }
+
+              public static void main(String[] args) {
+                  try {
+                      log("сервер запущен, uid=" + android.os.Process.myUid());
+                      initInject();
+                      pickDeviceId();
+                      List<String> nodes = findMice();
+                      if (nodes.isEmpty()) {
+                          log("МЫШЬ НЕ НАЙДЕНА (проверь, что она подключена к планшету)");
+                          return;
+                      }
+                      for (final String n : nodes) {
+                          new Thread(new Runnable() {
+                              public void run() {
+                                  readLoop(n);
+                              }
+                          }).start();
+                      }
+                      new Thread(new Runnable() {
+                          public void run() {
+                              stdinLoop();
+                          }
+                      }).start();
+                      loop();
+                  } catch (Throwable t) {
+                      log("ФАТАЛЬНО: " + t);
+                  }
+              }
+
+              static void initInject() throws Exception {
+                  Class<?> c;
+                  try {
+                      c = Class.forName("android.hardware.input.InputManagerGlobal");
+                  } catch (ClassNotFoundException e) {
+                      c = Class.forName("android.hardware.input.InputManager");
+                  }
+                  im = c.getDeclaredMethod("getInstance").invoke(null);
+                  try {
+                      inject = c.getMethod("injectInputEvent", InputEvent.class, int.class);
+                      inject3 = false;
+                  } catch (NoSuchMethodException e) {
+                      inject = c.getMethod("injectInputEvent", InputEvent.class, int.class, int.class);
+                      inject3 = true;
+                  }
+                  log("инъекция: " + c.getSimpleName() + (inject3 ? " (3 арг.)" : " (2 арг.)"));
+              }
+
+              static void pickDeviceId() {
+                  try {
+                      for (int id : InputDevice.getDeviceIds()) {
+                          InputDevice d = InputDevice.getDevice(id);
+                          if (d == null) continue;
+                          int s = d.getSources();
+                          if ((s & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+                                  || (s & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
+                              deviceId = id;
+                              log("найден геймпад id=" + id + " " + d.getName());
+                              return;
+                          }
+                      }
+                  } catch (Throwable t) {
+                      log("список устройств: " + t);
+                  }
+                  log("геймпад не найден, deviceId=-1");
+              }
+
+              static List<String> findMice() throws Exception {
+                  List<String> out = new ArrayList<String>();
+                  BufferedReader r = new BufferedReader(new FileReader("/proc/bus/input/devices"));
+                  String name = "", handlers = "", rel = "";
+                  while (true) {
+                      String line = r.readLine();
+                      if (line == null || line.trim().isEmpty()) {
+                          if (!rel.isEmpty() && handlers.contains("event")) {
+                              String t = rel.trim();
+                              int sp = t.lastIndexOf(' ');
+                              String hex = sp >= 0 ? t.substring(sp + 1) : t;
+                              long v = Long.parseLong(hex, 16);
+                              if ((v & 3L) == 3L) {
+                                  for (String h : handlers.trim().split("\\s+")) {
+                                      if (h.startsWith("event")) {
+                                          out.add("/dev/input/" + h);
+                                          log("мышь: " + name + " -> " + h);
+                                      }
+                                  }
+                              }
+                          }
+                          name = "";
+                          handlers = "";
+                          rel = "";
+                          if (line == null) break;
+                          continue;
+                      }
+                      if (line.startsWith("N: Name=")) name = line.substring(8);
+                      else if (line.startsWith("H: Handlers=")) handlers = line.substring(12);
+                      else if (line.startsWith("B: REL=")) rel = line.substring(7);
+                  }
+                  r.close();
+                  return out;
+              }
+
+              static void readLoop(String path) {
+                  try {
+                      FileInputStream in = new FileInputStream(path);
+                      int sz = android.os.Process.is64Bit() ? 24 : 16;
+                      byte[] buf = new byte[sz];
+                      ByteBuffer bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN);
+                      while (true) {
+                          int got = 0;
+                          while (got < sz) {
+                              int n = in.read(buf, got, sz - got);
+                              if (n < 0) return;
+                              got += n;
+                          }
+                          int off = sz - 8;
+                          int type = bb.getShort(off) & 0xffff;
+                          int code = bb.getShort(off + 2) & 0xffff;
+                          int val = bb.getInt(off + 4);
+                          if (type == 2) {
+                              synchronized (lock) {
+                                  if (code == 0) dx += val;
+                                  else if (code == 1) dy += val;
+                                  else if (code == 8) wheel += val;
+                              }
+                          } else if (type == 1) {
+                              synchronized (lock) {
+                                  if (code == 0x110) lmb = val != 0;
+                                  else if (code == 0x111) rmb = val != 0;
+                                  else if (code == 0x112) mmb = val != 0;
+                              }
+                          }
+                      }
+                  } catch (Throwable t) {
+                      log("ошибка чтения " + path + ": " + t);
+                  }
+              }
+
+              static void stdinLoop() {
+                  try {
+                      BufferedReader r = new BufferedReade
