@@ -1,4 +1,4 @@
-name: Build Mouse2Pad APK
+name: Build ForTablet APK
 
 on:
   workflow_dispatch:
@@ -62,11 +62,11 @@ jobs:
               namespace 'com.m2p'
               compileSdk 34
               defaultConfig {
-                  applicationId 'com.m2p.shizupad'
+                  applicationId 'com.m2p.fortablet'
                   minSdk 28
                   targetSdk 34
                   versionCode 1
-                  versionName '2.0'
+                  versionName '2.0-ForTablet'
               }
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
@@ -86,7 +86,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
               <application
-                  android:label="Mouse2Pad"
+                  android:label="ForTablet"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
                   <provider
                       android:name="rikka.shizuku.ShizukuProvider"
@@ -142,6 +142,11 @@ jobs:
                   val root = LinearLayout(this)
                   root.orientation = LinearLayout.VERTICAL
                   root.setPadding(32, 32, 32, 32)
+
+                  val title = TextView(this)
+                  title.text = "ForTablet (Shizuku)"
+                  title.textSize = 22f
+                  root.addView(title)
 
                   status = TextView(this)
                   status.textSize = 16f
@@ -487,10 +492,4 @@ jobs:
                           }
                       }
                   } catch (Throwable t) {
-                      log("ошибка чтения " + path + ": " + t);
-                  }
-              }
-
-              static void stdinLoop() {
-                  try {
-                      BufferedReader r = new BufferedReade
+                      log("ошибка ч
