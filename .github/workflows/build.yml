@@ -25,471 +25,139 @@ jobs:
 
       - name: Generate project
         run: |
-          mkdir -p app/src/main/java/com/m2p
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "Mouse2Pad"
-          include ':app'
+          base64 -d > p.tgz <<'EOF'
+          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
+          G2ZmqzUwMDAwMDAw+Pf4ATpOh/wAeAAA
           EOF
-          cat > build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.2.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
-          }
-          EOF
-          cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2g
-          android.useAndroidX=true
-          EOF
-          cat > app/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application'
-              id 'org.jetbrains.kotlin.android'
-          }
-          android {
-              namespace 'com.m2p'
-              compileSdk 34
-              defaultConfig {
-                  applicationId 'com.m2p.fortablet'
-                  minSdk 28
-                  targetSdk 34
-                  versionCode 1
-                  versionName '2.0-ForTablet'
-              }
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-          }
-          dependencies {
-              implementation 'dev.rikka.shizuku:api:13.1.5'
-              implementation 'dev.rikka.shizuku:provider:13.1.5'
-          }
-          EOF
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
-              <application
-                  android:label="ForTablet"
-                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-                  <provider
-                      android:name="rikka.shizuku.ShizukuProvider"
-                      android:authorities="${applicationId}.shizuku"
-                      android:enabled="true"
-                      android:exported="true"
-                      android:multiprocess="false"
-                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-          cat > app/src/main/java/com/m2p/MainActivity.kt <<'EOF'
-          package com.m2p
+          echo "7c31a4ddc98857302a10969266db776b959c853a6c6b055a11a93d16fb0b070e  p.tgz" | sha256sum -c -
+          tar xzf p.tgz
 
-          import android.app.Activity
-          import android.content.pm.PackageManager
-          import android.os.Bundle
-          import android.view.View
-          import android.widget.Button
-          import android.widget.LinearLayout
-          import android.widget.ScrollView
-          import android.widget.SeekBar
-          import android.widget.TextView
-          import rikka.shizuku.Shizuku
-          import java.io.InputStream
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon --stacktrace
 
-          class MainActivity : Activity() {
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk ForTablet.apk
 
-              private lateinit var status: TextView
-              private lateinit var logView: TextView
-              private lateinit var scroll: ScrollView
-              private var proc: Process? = null
-              private var sens = 1500
-              private var dead = 5500
-              private val lines = ArrayList<String>()
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ForTablet-apk
+          path: ForTablet.apk
 
-              private val onBinder = Shizuku.OnBinderReceivedListener { runOnUiThread { refresh() } }
-              private val onDead = Shizuku.OnBinderDeadListener { runOnUiThread { refresh() } }
-              private val onPerm = Shizuku.OnRequestPermissionResultListener { _, _ -> runOnUiThread { refresh() } }
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fortablet-${{ github.run_number }}
+          name: ForTablet ${{ github.run_number }}
+          files: ForTablet.apk
 
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  val root = LinearLayout(this)
-                  root.orientation = LinearLayout.VERTICAL
-                  root.setPadding(32, 32, 32, 32)
-
-                  val title = TextView(this)
-                  title.text = "ForTablet (Shizuku)"
-                  title.textSize = 22f
-                  root.addView(title)
-
-                  status = TextView(this)
-                  status.textSize = 16f
-                  root.addView(status)
-
-                  root.addView(button("1. Разрешить Shizuku") { askPermission() })
-                  root.addView(button("2. Запустить мост") { startBridge() })
-                  root.addView(button("Остановить") { stopBridge() })
-                  root.addView(slider("Чувствительность", 200, 6000, sens) {
-                      sens = it
-                      send("S $it")
-                  })
-                  root.addView(slider("Мёртвая зона", 0, 15000, dead) {
-                      dead = it
-                      send("D $it")
-                  })
-
-                  scroll = ScrollView(this)
-                  logView = TextView(this)
-                  logView.textSize = 12f
-                  scroll.addView(logView)
-                  root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-                  setContentView(root)
-
-                  Shizuku.addBinderReceivedListenerSticky(onBinder)
-                  Shizuku.addBinderDeadListener(onDead)
-                  Shizuku.addRequestPermissionResultListener(onPerm)
-                  refresh()
-              }
-
-              override fun onDestroy() {
-                  super.onDestroy()
-                  Shizuku.removeBinderReceivedListener(onBinder)
-                  Shizuku.removeBinderDeadListener(onDead)
-                  Shizuku.removeRequestPermissionResultListener(onPerm)
-              }
-
-              private fun button(label: String, action: () -> Unit): Button {
-                  val b = Button(this)
-                  b.text = label
-                  b.setOnClickListener { action() }
-                  return b
-              }
-
-              private fun slider(label: String, min: Int, max: Int, init: Int, onSet: (Int) -> Unit): View {
-                  val box = LinearLayout(this)
-                  box.orientation = LinearLayout.VERTICAL
-                  val t = TextView(this)
-                  t.text = "$label: $init"
-                  val s = SeekBar(this)
-                  s.max = max - min
-                  s.progress = init - min
-                  s.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                      override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                          onSet(min + p)
-                          t.text = "$label: ${min + p}"
-                      }
-                      override fun onStartTrackingTouch(sb: SeekBar?) {}
-                      override fun onStopTrackingTouch(sb: SeekBar?) {}
-                  })
-                  box.addView(t)
-                  box.addView(s)
-                  return box
-              }
-
-              private fun log(s: String) {
-                  lines.add(s)
-                  while (lines.size > 60) lines.removeAt(0)
-                  logView.text = lines.joinToString("\n")
-                  scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-              }
-
-              private fun post(s: String) {
-                  runOnUiThread { log(s) }
-              }
-
-              private fun binderAlive(): Boolean = try {
-                  Shizuku.pingBinder()
-              } catch (e: Throwable) {
-                  false
-              }
-
-              private fun granted(): Boolean = try {
-                  binderAlive() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-              } catch (e: Throwable) {
-                  false
-              }
-
-              private fun refresh() {
-                  status.text = when {
-                      !binderAlive() -> "Shizuku не запущен (открой приложение Shizuku и запусти его)"
-                      !granted() -> "Shizuku запущен. Нажми «1. Разрешить Shizuku»"
-                      else -> "Shizuku готов. Нажми «2. Запустить мост»"
-                  }
-              }
-
-              private fun askPermission() {
-                  if (!binderAlive()) {
-                      log("Shizuku не запущен")
-                      return
-                  }
-                  if (granted()) {
-                      log("Разрешение уже есть")
-                      return
-                  }
-                  Shizuku.requestPermission(100)
-              }
-
-              private fun shizukuExec(cmd: Array<String>): Process {
-                  val m = Shizuku::class.java.getDeclaredMethod(
-                      "newProcess",
-                      Array<String>::class.java,
-                      Array<String>::class.java,
-                      String::class.java
-                  )
-                  m.isAccessible = true
-                  return m.invoke(null, cmd, null, null) as Process
-              }
-
-              private fun pump(s: InputStream) {
-                  Thread {
-                      try {
-                          s.bufferedReader().forEachLine { l -> post(l) }
-                      } catch (e: Throwable) {
-                          post("поток закрыт")
-                      }
-                  }.start()
-              }
-
-              private fun send(s: String) {
-                  Thread {
-                      try {
-                          val o = proc?.outputStream
-                          if (o != null) {
-                              o.write((s + "\n").toByteArray())
-                              o.flush()
-                          }
-                      } catch (e: Throwable) {
-                      }
-                  }.start()
-              }
-
-              private fun startBridge() {
-                  if (!granted()) {
-                      log("Сначала запусти Shizuku и дай разрешение")
-                      return
-                  }
-                  val apk = applicationInfo.sourceDir
-                  log("запуск...")
-                  Thread {
-                      try {
-                          shizukuExec(arrayOf("pkill", "-f", "m2p-serve[r]")).waitFor()
-                          val p = shizukuExec(
-                              arrayOf(
-                                  "sh", "-c",
-                                  "CLASSPATH=$apk exec app_process /system/bin --nice-name=m2p-server com.m2p.Server"
-                              )
-                          )
-                          proc = p
-                          pump(p.inputStream)
-                          pump(p.errorStream)
-                          send("S $sens")
-                          send("D $dead")
-                      } catch (e: Throwable) {
-                          post("ОШИБКА запуска: " + (e.cause ?: e))
-                      }
-                  }.start()
-              }
-
-              private fun stopBridge() {
-                  send("Q")
-                  log("остановка...")
-              }
-          }
-          EOF
-          cat > app/src/main/java/com/m2p/Server.java <<'EOF'
-          package com.m2p;
-
-          import android.os.SystemClock;
-          import android.view.InputDevice;
-          import android.view.InputEvent;
-          import android.view.KeyEvent;
-          import android.view.MotionEvent;
-
-          import java.io.BufferedReader;
-          import java.io.FileInputStream;
-          import java.io.FileReader;
-          import java.io.InputStreamReader;
-          import java.lang.reflect.Method;
-          import java.nio.ByteBuffer;
-          import java.nio.ByteOrder;
-          import java.util.ArrayList;
-          import java.util.List;
-
-          /** Запускается через Shizuku (app_process, uid shell): читает мышь из /dev/input и подаёт в систему события "геймпада". */
-          public class Server {
-              static volatile int sens = 1500;
-              static volatile int dead = 5500;
-              static final Object lock = new Object();
-              static float dx, dy;
-              static boolean lmb, rmb, mmb;
-              static int wheel;
-
-              static Object im;
-              static Method inject;
-              static boolean inject3;
-              static int deviceId = -1;
-
-              static void log(String s) {
-                  System.out.println(s);
-                  System.out.flush();
-              }
-
-              public static void main(String[] args) {
-                  try {
-                      log("сервер запущен, uid=" + android.os.Process.myUid());
-                      initInject();
-                      pickDeviceId();
-                      List<String> nodes = findMice();
-                      if (nodes.isEmpty()) {
-                          log("МЫШЬ НЕ НАЙДЕНА (проверь, что она подключена к планшету)");
-                          return;
-                      }
-                      for (final String n : nodes) {
-                          new Thread(new Runnable() {
-                              public void run() {
-                                  readLoop(n);
-                              }
-                          }).start();
-                      }
-                      new Thread(new Runnable() {
-                          public void run() {
-                              stdinLoop();
-                          }
-                      }).start();
-                      loop();
-                  } catch (Throwable t) {
-                      log("ФАТАЛЬНО: " + t);
-                  }
-              }
-
-              static void initInject() throws Exception {
-                  Class<?> c;
-                  try {
-                      c = Class.forName("android.hardware.input.InputManagerGlobal");
-                  } catch (ClassNotFoundException e) {
-                      c = Class.forName("android.hardware.input.InputManager");
-                  }
-                  im = c.getDeclaredMethod("getInstance").invoke(null);
-                  try {
-                      inject = c.getMethod("injectInputEvent", InputEvent.class, int.class);
-                      inject3 = false;
-                  } catch (NoSuchMethodException e) {
-                      inject = c.getMethod("injectInputEvent", InputEvent.class, int.class, int.class);
-                      inject3 = true;
-                  }
-                  log("инъекция: " + c.getSimpleName() + (inject3 ? " (3 арг.)" : " (2 арг.)"));
-              }
-
-              static void pickDeviceId() {
-                  try {
-                      for (int id : InputDevice.getDeviceIds()) {
-                          InputDevice d = InputDevice.getDevice(id);
-                          if (d == null) continue;
-                          int s = d.getSources();
-                          if ((s & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
-                                  || (s & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
-                              deviceId = id;
-                              log("найден геймпад id=" + id + " " + d.getName());
-                              return;
-                          }
-                      }
-                  } catch (Throwable t) {
-                      log("список устройств: " + t);
-                  }
-                  log("геймпад не найден, deviceId=-1");
-              }
-
-              static List<String> findMice() throws Exception {
-                  List<String> out = new ArrayList<String>();
-                  BufferedReader r = new BufferedReader(new FileReader("/proc/bus/input/devices"));
-                  String name = "", handlers = "", rel = "";
-                  while (true) {
-                      String line = r.readLine();
-                      if (line == null || line.trim().isEmpty()) {
-                          if (!rel.isEmpty() && handlers.contains("event")) {
-                              String t = rel.trim();
-                              int sp = t.lastIndexOf(' ');
-                              String hex = sp >= 0 ? t.substring(sp + 1) : t;
-                              long v = Long.parseLong(hex, 16);
-                              if ((v & 3L) == 3L) {
-                                  for (String h : handlers.trim().split("\\s+")) {
-                                      if (h.startsWith("event")) {
-                                          out.add("/dev/input/" + h);
-                                          log("мышь: " + name + " -> " + h);
-                                      }
-                                  }
-                              }
-                          }
-                          name = "";
-                          handlers = "";
-                          rel = "";
-                          if (line == null) break;
-                          continue;
-                      }
-                      if (line.startsWith("N: Name=")) name = line.substring(8);
-                      else if (line.startsWith("H: Handlers=")) handlers = line.substring(12);
-                      else if (line.startsWith("B: REL=")) rel = line.substring(7);
-                  }
-                  r.close();
-                  return out;
-              }
-
-              static void readLoop(String path) {
-                  try {
-                      FileInputStream in = new FileInputStream(path);
-                      int sz = android.os.Process.is64Bit() ? 24 : 16;
-                      byte[] buf = new byte[sz];
-                      ByteBuffer bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN);
-                      while (true) {
-                          int got = 0;
-                          while (got < sz) {
-                              int n = in.read(buf, got, sz - got);
-                              if (n < 0) return;
-                              got += n;
-                          }
-                          int off = sz - 8;
-                          int type = bb.getShort(off) & 0xffff;
-                          int code = bb.getShort(off + 2) & 0xffff;
-                          int val = bb.getInt(off + 4);
-                          if (type == 2) {
-                              synchronized (lock) {
-                                  if (code == 0) dx += val;
-                                  else if (code == 1) dy += val;
-                                  else if (code == 8) wheel += val;
-                              }
-                          } else if (type == 1) {
-                              synchronized (lock) {
-                                  if (code == 0x110) lmb = val != 0;
-                                  else if (code == 0x111) rmb = val != 0;
-                                  else if (code == 0x112) mmb = val != 0;
-                              }
-                          }
-                      }
-                  } catch (Throwable t) {
-                      log("ошибка ч
+      - name: Where to download
+        run: |
+          echo "СКАЧАТЬ APK: https://github.com/${{ github.repository }}/releases/tag/fortablet-${{ github.run_number }}"
